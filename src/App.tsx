@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MessageSquare, Bot, KeyRound, Settings } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import type { AppView } from './core/types';
+import { getSetting } from './core/db';
 import { ThreadList } from './features/messaging/ThreadList';
 import { ChatView } from './features/messaging/ChatView';
 import { AgentList } from './features/agents/AgentList';
@@ -10,6 +12,12 @@ import { SettingsView } from './features/settings/SettingsView';
 export default function App() {
   const [view, setView] = useState<AppView>('threads');
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const theme = useLiveQuery(() => getSetting<'dark' | 'light'>('theme', 'dark'), []);
+
+  useEffect(() => {
+    const t = theme ?? 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  }, [theme]);
 
   const openThread = (id: string) => {
     setActiveThreadId(id);
@@ -24,7 +32,7 @@ export default function App() {
   ];
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-[var(--border)] bg-[var(--panel)] py-4">
         <div className="mb-6 text-xs font-bold tracking-widest text-[var(--accent)]">AEGIS</div>
         {navItems.map(({ id, icon: Icon, label }) => {
@@ -40,7 +48,7 @@ export default function App() {
               className={`relative flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${
                 active
                   ? 'bg-[var(--accent-dim)] text-[var(--accent)]'
-                  : 'text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]'
+                  : 'text-[var(--muted)] hover:bg-black/5 hover:text-[var(--text)]'
               }`}
             >
               {active && (
