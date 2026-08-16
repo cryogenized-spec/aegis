@@ -1,4 +1,6 @@
 import { getSetting } from './db';
+import { getSessionGeminiKey } from './session';
+import { isEncryptedBlob } from './crypto';
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -15,11 +17,21 @@ export interface StreamOptions {
 }
 
 /**
- * Resolve the API key: lockbox first, then Vite env fallback.
+ * Resolve the API key priority:
+ * 1. In-memory session (unlocked encrypted key)
+ * 2. Plaintext lockbox value (legacy / no passphrase)
+ * 3. Vite env fallback
  */
 export async function resolveApiKey(): Promise<string | null> {
-  const fromLockbox = await getSetting<string>('apiKey.gemini');
-  if (fromLockbox?.trim()) return fromLockbox.trim();
+  const session = getSessionGeminiKey();
+  if (session) return session;
+
+  const stored = await getSetting<unknown>('apiKey.gemini');
+  if (typeof stored === 'string' && stored.trim()) return stored.trim();
+  if (isEncryptedBlob(stored)) {
+    throw new Error('API key is encrypted. Unlock it in Lockbox first.');
+  }
+
   const fromEnv = import.meta.env.VITE_GEMINI_API_KEY;
   if (fromEnv?.trim()) return fromEnv.trim();
   return null;
@@ -43,7 +55,6 @@ export async function* streamGemini(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent` +
     `?alt=sse&key=${encodeURIComponent(apiKey)}`;
 
-  // Gemini expects alternating user/model turns; map our roles.
   const contents = turns
     .filter((t) => t.role !== 'system')
     .map((t) => ({
