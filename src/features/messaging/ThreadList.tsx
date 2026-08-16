@@ -1,5 +1,6 @@
+import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, MessageSquare, Trash2 } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Search } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Thread } from '@/core/db';
 
@@ -8,10 +9,21 @@ interface Props {
 }
 
 export function ThreadList({ onOpenThread }: Props) {
+  const [query, setQuery] = useState('');
   const threads = useLiveQuery(
     () => db.threads.orderBy('updatedAt').reverse().toArray(),
     [],
   );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || !threads) return threads || [];
+    return threads.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        (t.preview || '').toLowerCase().includes(q),
+    );
+  }, [threads, query]);
 
   const createThread = async () => {
     const now = Date.now();
@@ -46,6 +58,21 @@ export function ThreadList({ onOpenThread }: Props) {
         </button>
       </header>
 
+      <div className="border-b border-[var(--border)] px-3 py-2">
+        <div className="relative">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search threads…"
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] py-2 pl-8 pr-3 text-sm outline-none focus:border-[var(--accent)]"
+          />
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-2">
         {!threads?.length && (
           <div className="flex flex-col items-center justify-center gap-3 pt-20 text-[var(--muted)]">
@@ -60,12 +87,16 @@ export function ThreadList({ onOpenThread }: Props) {
           </div>
         )}
 
+        {threads && threads.length > 0 && filtered.length === 0 && (
+          <p className="px-2 pt-8 text-center text-sm text-[var(--muted)]">No matches</p>
+        )}
+
         <ul className="space-y-1">
-          {threads?.map((t) => (
+          {filtered.map((t) => (
             <li key={t.id} className="group relative">
               <button
                 onClick={() => onOpenThread(t.id)}
-                className="w-full rounded-xl border border-transparent px-3 py-3 pr-10 text-left transition-colors hover:border-[var(--border)] hover:bg-white/5"
+                className="w-full rounded-xl border border-transparent px-3 py-3 pr-10 text-left transition-colors hover:border-[var(--border)] hover:bg-black/5"
               >
                 <div className="truncate text-sm font-medium text-[var(--text)]">{t.title}</div>
                 {t.preview && (
