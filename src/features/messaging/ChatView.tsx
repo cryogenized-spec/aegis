@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Send, Square, ImagePlus, X, Mic } from 'lucide-react';
+import { ArrowLeft, Send, Square, ImagePlus, X, Mic, Trash2, Download } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Message } from '@/core/db';
 import { streamGemini, type ChatTurn } from '@/core/ai';
+import { compressImageDataUrl } from '@/core/media';
 import { MessageBody } from './MessageBody';
 
 interface Props {
@@ -20,6 +21,25 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
+  onerror: (() => void) | null;
+};
+
+function getSpeechRecognition(): SpeechRecognitionLike | null {
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  };
+  const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
+  return Ctor ? new Ctor() : null;
+}
+
 export function ChatView({ threadId, onBack }: Props) {
   const [input, setInput] = useState('');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -31,6 +51,8 @@ export function ChatView({ threadId, onBack }: Props) {
   const abortRef = useRef<AbortController | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const transcriptRef = useRef('');
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   const thread = useLiveQuery(() => db.threads.get(threadId), [threadId]);
   const agent = useLiveQuery(
@@ -50,6 +72,7 @@ export function ChatView({ threadId, onBack }: Props) {
     return () => {
       abortRef.current?.abort();
       mediaRecorderRef.current?.stop();
+      recognitionRef.current?.stop();
     };
   }, []);
 
@@ -63,16 +86,17 @@ export function ChatView({ threadId, onBack }: Props) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !file.type.startsWith('image/')) return;
-    if (file.size > 4 * 1024 * 1024) {
-      setError('Image must be under 4 MB for v0.1.');
+    if (file.size > 12 * 1024 * 1024) {
+      setError('Image must be under 12 MB before compression.');
       return;
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setPendingImage(dataUrl);
+      const raw = await readFileAsDataUrl(file);
+      const compressed = await compressImageDataUrl(raw);
+      setPendingImage(compressed);
       setError(null);
     } catch {
-      setError('Could not read image.');
+      setError('Could not read or compress image.');
     }
   };
 
@@ -163,6 +187,7 @@ export function ChatView({ threadId, onBack }: Props) {
   const toggleRecord = async () => {
     if (recording) {
       mediaRecorderRef.current?.stop();
+      recognitionRef.current?.stop();
       setRecording(false);
       return;
     }
@@ -171,7 +196,32 @@ export function ChatView({ threadId, onBack }: Props) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
+      transcriptRef.current = '';
       mediaRecorderRef.current = recorder;
+
+      const recognition = getSpeechRecognition();
+      if (recognition) {
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = navigator.language || 'en-US';
+        recognition.onresult = (event) => {
+          let finalText = '';
+          for (let i = 0; i < event.results.length; i++) {
+            const r = event.results[i];
+            if (r.isFinal) finalText += r[0].transcript;
+          }
+          if (finalText) transcriptRef.current = finalText.trim();
+        };
+        recognition.onerror = () => {
+          /* STT is best-effort */
+        };
+        recognitionRef.current = recognition;
+        try {
+          recognition.start();
+        } catch {
+          /* ignore */
+        }
+      }
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -179,6 +229,8 @@ export function ChatView({ threadId, onBack }: Props) {
 
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        recognitionRef.current?.stop();
+
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         if (blob.size === 0) return;
 
@@ -186,20 +238,31 @@ export function ChatView({ threadId, onBack }: Props) {
           new File([blob], 'voice.webm', { type: blob.type }),
         );
 
+        const transcript = transcriptRef.current;
         const userMsg: Message = {
           id: uuid(),
           threadId,
           role: 'user',
-          content: '(voice note)',
+          content: transcript || '(voice note)',
           createdAt: Date.now(),
           audioDataUrl: dataUrl,
         };
         await db.messages.add(userMsg);
         await db.threads.update(threadId, {
           updatedAt: Date.now(),
-          preview: 'Voice note',
+          preview: transcript ? transcript.slice(0, 80) : 'Voice note',
         });
-        // Voice is stored for playback; transcription/AI path can come later.
+
+        // If we got a transcript, optionally ask the agent
+        if (transcript && thread?.kind === 'agent') {
+          setSending(true);
+          const history: ChatTurn[] = [...(messages || []), userMsg].map((m) => ({
+            role: m.role,
+            content: m.content,
+            imageDataUrl: m.imageDataUrl,
+          }));
+          await runAssistant(history);
+        }
       };
 
       recorder.start();
@@ -210,9 +273,36 @@ export function ChatView({ threadId, onBack }: Props) {
     }
   };
 
+  const deleteMessage = async (id: string) => {
+    await db.messages.delete(id);
+  };
+
+  const exportThread = async () => {
+    const msgs = await db.messages.where('threadId').equals(threadId).sortBy('createdAt');
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      thread,
+      agent: agent || null,
+      messages: msgs.map((m) => ({
+        role: m.role,
+        content: m.content,
+        createdAt: m.createdAt,
+        hasImage: Boolean(m.imageDataUrl),
+        hasAudio: Boolean(m.audioDataUrl),
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aegis-thread-${threadId.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-[var(--border)] px-3 py-3">
+      <header className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
         <button
           onClick={onBack}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5 hover:text-[var(--text)]"
@@ -228,38 +318,60 @@ export function ChatView({ threadId, onBack }: Props) {
             </p>
           )}
         </div>
+        <button
+          type="button"
+          onClick={exportThread}
+          title="Export thread JSON"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5 hover:text-[var(--text)]"
+        >
+          <Download size={16} />
+        </button>
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {messages?.map((m) => {
           const isUser = m.role === 'user';
           return (
-            <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
-                  isUser
-                    ? 'rounded-br-md bg-[var(--accent)] text-black'
-                    : 'rounded-bl-md border border-[var(--border)] bg-[var(--panel)] text-[var(--text)]'
-                }`}
-              >
-                {m.imageDataUrl && (
-                  <img
-                    src={m.imageDataUrl}
-                    alt=""
-                    className="mb-2 max-h-56 w-full rounded-lg object-contain"
-                  />
-                )}
-                {m.audioDataUrl && (
-                  <audio controls src={m.audioDataUrl} className="mb-2 max-w-full" />
-                )}
-                {m.content !== '(voice note)' &&
-                  m.content !== '(image)' &&
-                  (m.content || (sending && m.role === 'assistant')) && (
-                    <MessageBody content={m.content || '…'} inverted={isUser} />
+            <div key={m.id} className={`group flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+              <div className="relative max-w-[85%]">
+                <div
+                  className={`rounded-2xl px-3.5 py-2.5 ${
+                    isUser
+                      ? 'rounded-br-md bg-[var(--accent)] text-black'
+                      : 'rounded-bl-md border border-[var(--border)] bg-[var(--panel)] text-[var(--text)]'
+                  }`}
+                >
+                  {m.imageDataUrl && (
+                    <img
+                      src={m.imageDataUrl}
+                      alt=""
+                      className="mb-2 max-h-56 w-full rounded-lg object-contain"
+                    />
                   )}
-                {(m.content === '(voice note)' || m.content === '(image)') && !m.audioDataUrl && !m.imageDataUrl && (
-                  <span className="text-xs opacity-70">{m.content}</span>
-                )}
+                  {m.audioDataUrl && (
+                    <audio controls src={m.audioDataUrl} className="mb-2 max-w-full" />
+                  )}
+                  {m.content !== '(voice note)' &&
+                    m.content !== '(image)' &&
+                    (m.content || (sending && m.role === 'assistant')) && (
+                      <MessageBody content={m.content || '…'} inverted={isUser} />
+                    )}
+                  {(m.content === '(voice note)' || m.content === '(image)') &&
+                    !m.audioDataUrl &&
+                    !m.imageDataUrl && (
+                      <span className="text-xs opacity-70">{m.content}</span>
+                    )}
+                </div>
+                <button
+                  type="button"
+                  title="Delete message"
+                  onClick={() => deleteMessage(m.id)}
+                  className={`absolute -top-2 rounded-full border border-[var(--border)] bg-[var(--panel)] p-1 text-[var(--muted)] opacity-0 shadow-sm transition-opacity hover:text-red-400 group-hover:opacity-100 ${
+                    isUser ? '-left-2' : '-right-2'
+                  }`}
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             </div>
           );
