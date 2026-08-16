@@ -6,7 +6,7 @@ export function SettingsView() {
 
   const setTheme = async (value: 'dark' | 'light') => {
     await setSetting('theme', value);
-    // Theme tokens are currently fixed dark; light mode wiring comes later.
+    document.documentElement.setAttribute('data-theme', value);
   };
 
   return (
@@ -35,17 +35,11 @@ export function SettingsView() {
               </button>
             ))}
           </div>
-          <p className="text-xs text-[var(--muted)]">
-            Light theme tokens are prepared; full application lands shortly.
-          </p>
         </section>
 
         <section className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
           <div className="text-sm font-medium">Aegis</div>
-          <div className="text-xs text-[var(--muted)]">v0.1.0 — scaffolding</div>
-          <div className="text-xs text-[var(--muted)]">
-            Local-first messaging and AI agents. Clean rebuild.
-          </div>
+          <div className="text-xs text-[var(--muted)]">v0.1 — local-first messaging & agents</div>
         </section>
       </div>
     </div>
