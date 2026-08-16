@@ -2,44 +2,34 @@
 
 Local-first messaging and AI agent platform.
 
-A clean rebuild focused on maintainability, clear domain boundaries, and a deliberately limited initial scope.
-
-## Current status (v0.1)
+## Status (v0.1)
 
 | Area | Status |
 |------|--------|
 | Threads + local messages | Working |
-| Gemini streaming replies | Working |
-| Agents (prompt, model, start chat) | Working |
-| Markdown in bubbles | Working |
-| Image attach (local display) | Working |
-| API lockbox + passphrase encryption | Working |
-| Session unlock for encrypted keys | Working |
-| Theme / settings shell | Minimal |
+| Gemini streaming | Working |
+| Agents (prompt, model, temperature, delete) | Working |
+| Markdown bubbles | Working |
+| Image attach + vision | Working |
+| Voice notes (record / playback) | Working |
+| Lockbox + passphrase encryption | Working |
+| Dark / light theme | Working |
 
-Still out of scope for this phase: channels, P2P, organiser suite, local LLMs, vision-model image analysis, voice notes.
+Still later: STT on voice notes, channels, P2P, organiser suite, local LLMs.
 
 ## Architecture
 
 ```
 src/
-  core/           db, crypto, ai client, session
+  core/           db, crypto, ai (multimodal stream), session
   features/
-    messaging/    threads, chat, markdown body
-    agents/       agent list + edit + start chat
-    lockbox/      encrypted API key storage
-    settings/     appearance shell
+    messaging/    threads, chat, markdown, media
+    agents/       list, edit, delete, start chat
+    lockbox/      encrypted API keys
+    settings/     theme
 ```
 
-Principles:
-
-1. Feature modules own their UI and domain logic.
-2. Core stays thin and shared.
-3. No god components.
-4. Local-first — Dexie is the primary store.
-5. Secrets encrypted at rest when a passphrase is used.
-
-## Local development
+## Run
 
 ```bash
 npm install
@@ -47,15 +37,10 @@ cp .env.example .env.local   # optional VITE_GEMINI_API_KEY
 npm run dev
 ```
 
-1. Open **Lockbox** → paste a Gemini key → **Save encrypted** (recommended) or plaintext.
-2. If encrypted, **Unlock** with your passphrase once per session.
-3. Create an **Agent**, set a system prompt, start a chat.
-4. Stream replies in the thread view.
+1. **Lockbox** → save Gemini key (encrypted recommended) → unlock session  
+2. **Agents** → create, set prompt/model → start chat  
+3. Send text, images (vision), or voice notes  
 
 ## Stack
 
-- React 19 + TypeScript + Vite
-- Tailwind CSS v4
-- Dexie
-- Web Crypto (AES-GCM + PBKDF2)
-- Gemini Generative Language API (SSE streaming, no heavy SDK)
+React 19 · TypeScript · Vite · Tailwind v4 · Dexie · Web Crypto · Gemini SSE (no heavy SDK)
