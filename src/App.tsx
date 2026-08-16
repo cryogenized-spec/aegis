@@ -25,7 +25,6 @@ export default function App() {
 
   return (
     <div className="flex h-full w-full overflow-hidden">
-      {/* Sidebar */}
       <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-[var(--border)] bg-[var(--panel)] py-4">
         <div className="mb-6 text-xs font-bold tracking-widest text-[var(--accent)]">AEGIS</div>
         {navItems.map(({ id, icon: Icon, label }) => {
@@ -53,7 +52,6 @@ export default function App() {
         })}
       </nav>
 
-      {/* Main */}
       <main className="min-w-0 flex-1">
         {view === 'threads' && <ThreadList onOpenThread={openThread} />}
         {view === 'chat' && activeThreadId && (
@@ -65,7 +63,7 @@ export default function App() {
             }}
           />
         )}
-        {view === 'agents' && <AgentList />}
+        {view === 'agents' && <AgentList onOpenThread={openThread} />}
         {view === 'lockbox' && <Lockbox />}
         {view === 'settings' && <SettingsView />}
       </main>
