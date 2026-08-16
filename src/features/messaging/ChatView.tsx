@@ -1,20 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Send, Square } from 'lucide-react';
+import { ArrowLeft, Send, Square, ImagePlus, X } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Message } from '@/core/db';
 import { streamGemini, type ChatTurn } from '@/core/ai';
+import { MessageBody } from './MessageBody';
 
 interface Props {
   threadId: string;
   onBack: () => void;
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 export function ChatView({ threadId, onBack }: Props) {
   const [input, setInput] = useState('');
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const thread = useLiveQuery(() => db.threads.get(threadId), [threadId]);
@@ -43,49 +55,75 @@ export function ChatView({ threadId, onBack }: Props) {
     setSending(false);
   };
 
+  const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    if (file.size > 4 * 1024 * 1024) {
+      setError('Image must be under 4 MB for v0.1.');
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setPendingImage(dataUrl);
+      setError(null);
+    } catch {
+      setError('Could not read image.');
+    }
+  };
+
   const send = async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && !pendingImage) || sending) return;
 
     setError(null);
     setSending(true);
     setInput('');
+    const image = pendingImage;
+    setPendingImage(null);
 
     const userMsg: Message = {
       id: uuid(),
       threadId,
       role: 'user',
-      content: text,
+      content: text || (image ? '(image)' : ''),
       createdAt: Date.now(),
+      imageDataUrl: image || undefined,
     };
     await db.messages.add(userMsg);
     await db.threads.update(threadId, {
       updatedAt: Date.now(),
-      preview: text.slice(0, 80),
+      preview: text.slice(0, 80) || (image ? 'Image' : ''),
       title:
         thread?.title === 'New thread' || thread?.title?.startsWith('Chat with ')
-          ? text.slice(0, 40)
+          ? (text || 'Image').slice(0, 40)
           : thread?.title,
     });
 
+    // Text-only AI path for v0.1 (vision can come later)
+    if (!text) {
+      setSending(false);
+      return;
+    }
+
     const assistantId = uuid();
-    const assistantMsg: Message = {
+    await db.messages.add({
       id: assistantId,
       threadId,
       role: 'assistant',
       content: '',
       createdAt: Date.now() + 1,
-    };
-    await db.messages.add(assistantMsg);
+    });
 
-    const history: ChatTurn[] = [...(messages || []), userMsg].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const history: ChatTurn[] = [...(messages || []), userMsg]
+      .filter((m) => m.content && m.content !== '(image)')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
 
     const controller = new AbortController();
     abortRef.current = controller;
-
     let accumulated = '';
 
     try {
@@ -142,24 +180,34 @@ export function ChatView({ threadId, onBack }: Props) {
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {messages?.map((m) => (
-          <div
-            key={m.id}
-            className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                m.role === 'user'
-                  ? 'rounded-br-md bg-[var(--accent)] text-black'
-                  : 'rounded-bl-md border border-[var(--border)] bg-[var(--panel)] text-[var(--text)]'
-              }`}
-            >
-              <div className="whitespace-pre-wrap">
-                {m.content || (sending && m.role === 'assistant' ? '…' : '')}
+        {messages?.map((m) => {
+          const isUser = m.role === 'user';
+          return (
+            <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                  isUser
+                    ? 'rounded-br-md bg-[var(--accent)] text-black'
+                    : 'rounded-bl-md border border-[var(--border)] bg-[var(--panel)] text-[var(--text)]'
+                }`}
+              >
+                {m.imageDataUrl && (
+                  <img
+                    src={m.imageDataUrl}
+                    alt=""
+                    className="mb-2 max-h-56 w-full rounded-lg object-contain"
+                  />
+                )}
+                {(m.content || (sending && m.role === 'assistant')) && (
+                  <MessageBody
+                    content={m.content || '…'}
+                    inverted={isUser}
+                  />
+                )}
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 
@@ -170,7 +218,43 @@ export function ChatView({ threadId, onBack }: Props) {
       )}
 
       <div className="border-t border-[var(--border)] p-3">
+        {pendingImage && (
+          <div className="mb-2 flex items-start gap-2">
+            <div className="relative">
+              <img
+                src={pendingImage}
+                alt="Pending"
+                className="h-16 w-16 rounded-lg object-cover border border-[var(--border)]"
+              />
+              <button
+                type="button"
+                onClick={() => setPendingImage(null)}
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black text-white"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onPickImage}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={sending}
+            className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[var(--border)] text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-40"
+            title="Attach image"
+          >
+            <ImagePlus size={18} />
+          </button>
+
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -185,6 +269,7 @@ export function ChatView({ threadId, onBack }: Props) {
             disabled={sending}
             className="max-h-32 min-h-[42px] flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)] disabled:opacity-60"
           />
+
           {sending ? (
             <button
               onClick={stop}
@@ -196,7 +281,7 @@ export function ChatView({ threadId, onBack }: Props) {
           ) : (
             <button
               onClick={send}
-              disabled={!input.trim()}
+              disabled={!input.trim() && !pendingImage}
               className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-black disabled:opacity-40"
             >
               <Send size={18} />
