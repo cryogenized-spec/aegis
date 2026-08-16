@@ -16,8 +16,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: number;
-  /** Inline image as data URL (v0.1 — simple, local-only) */
   imageDataUrl?: string;
+  audioDataUrl?: string;
 }
 
 export interface Agent {
