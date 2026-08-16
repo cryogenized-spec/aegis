@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Send, Square, ImagePlus, X } from 'lucide-react';
+import { ArrowLeft, Send, Square, ImagePlus, X, Mic } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Message } from '@/core/db';
 import { streamGemini, type ChatTurn } from '@/core/ai';
@@ -24,10 +24,13 @@ export function ChatView({ threadId, onBack }: Props) {
   const [input, setInput] = useState('');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   const thread = useLiveQuery(() => db.threads.get(threadId), [threadId]);
   const agent = useLiveQuery(
@@ -46,6 +49,7 @@ export function ChatView({ threadId, onBack }: Props) {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      mediaRecorderRef.current?.stop();
     };
   }, []);
 
@@ -72,40 +76,7 @@ export function ChatView({ threadId, onBack }: Props) {
     }
   };
 
-  const send = async () => {
-    const text = input.trim();
-    if ((!text && !pendingImage) || sending) return;
-
-    setError(null);
-    setSending(true);
-    setInput('');
-    const image = pendingImage;
-    setPendingImage(null);
-
-    const userMsg: Message = {
-      id: uuid(),
-      threadId,
-      role: 'user',
-      content: text || (image ? '(image)' : ''),
-      createdAt: Date.now(),
-      imageDataUrl: image || undefined,
-    };
-    await db.messages.add(userMsg);
-    await db.threads.update(threadId, {
-      updatedAt: Date.now(),
-      preview: text.slice(0, 80) || (image ? 'Image' : ''),
-      title:
-        thread?.title === 'New thread' || thread?.title?.startsWith('Chat with ')
-          ? (text || 'Image').slice(0, 40)
-          : thread?.title,
-    });
-
-    // Text-only AI path for v0.1 (vision can come later)
-    if (!text) {
-      setSending(false);
-      return;
-    }
-
+  const runAssistant = async (history: ChatTurn[]) => {
     const assistantId = uuid();
     await db.messages.add({
       id: assistantId,
@@ -114,13 +85,6 @@ export function ChatView({ threadId, onBack }: Props) {
       content: '',
       createdAt: Date.now() + 1,
     });
-
-    const history: ChatTurn[] = [...(messages || []), userMsg]
-      .filter((m) => m.content && m.content !== '(image)')
-      .map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -159,12 +123,99 @@ export function ChatView({ threadId, onBack }: Props) {
     }
   };
 
+  const send = async () => {
+    const text = input.trim();
+    if ((!text && !pendingImage) || sending || recording) return;
+
+    setError(null);
+    setSending(true);
+    setInput('');
+    const image = pendingImage;
+    setPendingImage(null);
+
+    const userMsg: Message = {
+      id: uuid(),
+      threadId,
+      role: 'user',
+      content: text || (image ? '(image)' : ''),
+      createdAt: Date.now(),
+      imageDataUrl: image || undefined,
+    };
+    await db.messages.add(userMsg);
+    await db.threads.update(threadId, {
+      updatedAt: Date.now(),
+      preview: text.slice(0, 80) || (image ? 'Image' : ''),
+      title:
+        thread?.title === 'New thread' || thread?.title?.startsWith('Chat with ')
+          ? (text || 'Image').slice(0, 40)
+          : thread?.title,
+    });
+
+    const history: ChatTurn[] = [...(messages || []), userMsg].map((m) => ({
+      role: m.role,
+      content: m.content,
+      imageDataUrl: m.imageDataUrl,
+    }));
+
+    await runAssistant(history);
+  };
+
+  const toggleRecord = async () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size === 0) return;
+
+        const dataUrl = await readFileAsDataUrl(
+          new File([blob], 'voice.webm', { type: blob.type }),
+        );
+
+        const userMsg: Message = {
+          id: uuid(),
+          threadId,
+          role: 'user',
+          content: '(voice note)',
+          createdAt: Date.now(),
+          audioDataUrl: dataUrl,
+        };
+        await db.messages.add(userMsg);
+        await db.threads.update(threadId, {
+          updatedAt: Date.now(),
+          preview: 'Voice note',
+        });
+        // Voice is stored for playback; transcription/AI path can come later.
+      };
+
+      recorder.start();
+      setRecording(true);
+      setError(null);
+    } catch {
+      setError('Microphone access denied or unavailable.');
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-[var(--border)] px-3 py-3">
         <button
           onClick={onBack}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-white/5 hover:text-[var(--text)]"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5 hover:text-[var(--text)]"
         >
           <ArrowLeft size={18} />
         </button>
@@ -198,11 +249,16 @@ export function ChatView({ threadId, onBack }: Props) {
                     className="mb-2 max-h-56 w-full rounded-lg object-contain"
                   />
                 )}
-                {(m.content || (sending && m.role === 'assistant')) && (
-                  <MessageBody
-                    content={m.content || '…'}
-                    inverted={isUser}
-                  />
+                {m.audioDataUrl && (
+                  <audio controls src={m.audioDataUrl} className="mb-2 max-w-full" />
+                )}
+                {m.content !== '(voice note)' &&
+                  m.content !== '(image)' &&
+                  (m.content || (sending && m.role === 'assistant')) && (
+                    <MessageBody content={m.content || '…'} inverted={isUser} />
+                  )}
+                {(m.content === '(voice note)' || m.content === '(image)') && !m.audioDataUrl && !m.imageDataUrl && (
+                  <span className="text-xs opacity-70">{m.content}</span>
                 )}
               </div>
             </div>
@@ -224,7 +280,7 @@ export function ChatView({ threadId, onBack }: Props) {
               <img
                 src={pendingImage}
                 alt="Pending"
-                className="h-16 w-16 rounded-lg object-cover border border-[var(--border)]"
+                className="h-16 w-16 rounded-lg border border-[var(--border)] object-cover"
               />
               <button
                 type="button"
@@ -248,11 +304,25 @@ export function ChatView({ threadId, onBack }: Props) {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={sending}
+            disabled={sending || recording}
             className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[var(--border)] text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-40"
             title="Attach image"
           >
             <ImagePlus size={18} />
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleRecord}
+            disabled={sending}
+            className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border disabled:opacity-40 ${
+              recording
+                ? 'border-red-500 bg-red-500/15 text-red-500'
+                : 'border-[var(--border)] text-[var(--muted)] hover:text-[var(--accent)]'
+            }`}
+            title={recording ? 'Stop recording' : 'Voice note'}
+          >
+            <Mic size={18} />
           </button>
 
           <textarea
@@ -265,8 +335,8 @@ export function ChatView({ threadId, onBack }: Props) {
               }
             }}
             rows={1}
-            placeholder="Message…"
-            disabled={sending}
+            placeholder={recording ? 'Recording…' : 'Message…'}
+            disabled={sending || recording}
             className="max-h-32 min-h-[42px] flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)] disabled:opacity-60"
           />
 
@@ -281,7 +351,7 @@ export function ChatView({ threadId, onBack }: Props) {
           ) : (
             <button
               onClick={send}
-              disabled={!input.trim() && !pendingImage}
+              disabled={(!input.trim() && !pendingImage) || recording}
               className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-black disabled:opacity-40"
             >
               <Send size={18} />
