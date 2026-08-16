@@ -4,54 +4,58 @@ Local-first messaging and AI agent platform.
 
 A clean rebuild focused on maintainability, clear domain boundaries, and a deliberately limited initial scope.
 
-## MVP Scope (v0.1)
+## Current status (v0.1)
 
-The first version is intentionally narrow:
+| Area | Status |
+|------|--------|
+| Threads + local messages | Working |
+| Gemini streaming replies | Working |
+| Agents (prompt, model, start chat) | Working |
+| Markdown in bubbles | Working |
+| Image attach (local display) | Working |
+| API lockbox + passphrase encryption | Working |
+| Session unlock for encrypted keys | Working |
+| Theme / settings shell | Minimal |
 
-| Area | Included |
-|------|----------|
-| Messaging | Local threads, message list, composer |
-| AI | Agent conversations with streaming responses |
-| Security | API key lockbox (encrypted at rest) |
-| Media | Images and voice notes |
-| Settings | Theme, basic preferences |
-| Architecture | Modular feature layout, no god components |
+Still out of scope for this phase: channels, P2P, organiser suite, local LLMs, vision-model image analysis, voice notes.
 
-Explicitly **out of scope** for v0.1:
-- Channels / RSS
-- WhatsApp integration
-- Full organiser suite
-- Local LLM runtimes
-- P2P networking
-- Advanced image generation
-- Cron / background agents
+## Architecture
 
-These may return later as separate, well-bounded modules.
+```
+src/
+  core/           db, crypto, ai client, session
+  features/
+    messaging/    threads, chat, markdown body
+    agents/       agent list + edit + start chat
+    lockbox/      encrypted API key storage
+    settings/     appearance shell
+```
 
-## Architecture Principles
+Principles:
 
-1. **Feature modules** live under `src/features/`. Each owns its UI, hooks, and domain logic.
-2. **Core infrastructure** lives under `src/core/` (database, crypto, settings, shared UI primitives).
-3. Components stay focused. Large surfaces are composed, not monolithic.
-4. Local-first: Dexie (IndexedDB) is the primary data store.
-5. External API keys never leave the lockbox unencrypted.
+1. Feature modules own their UI and domain logic.
+2. Core stays thin and shared.
+3. No god components.
+4. Local-first — Dexie is the primary store.
+5. Secrets encrypted at rest when a passphrase is used.
 
-## Tech Stack
-
-- React 19 + TypeScript
-- Vite
-- Tailwind CSS v4
-- Dexie
-- Minimal, intentional dependencies only
-
-## Local Development
+## Local development
 
 ```bash
 npm install
-cp .env.example .env.local   # add GEMINI_API_KEY if using Google models
+cp .env.example .env.local   # optional VITE_GEMINI_API_KEY
 npm run dev
 ```
 
-## Status
+1. Open **Lockbox** → paste a Gemini key → **Save encrypted** (recommended) or plaintext.
+2. If encrypted, **Unlock** with your passphrase once per session.
+3. Create an **Agent**, set a system prompt, start a chat.
+4. Stream replies in the thread view.
 
-Scaffolding in progress. First vertical slice: messaging + AI streaming.
+## Stack
+
+- React 19 + TypeScript + Vite
+- Tailwind CSS v4
+- Dexie
+- Web Crypto (AES-GCM + PBKDF2)
+- Gemini Generative Language API (SSE streaming, no heavy SDK)
