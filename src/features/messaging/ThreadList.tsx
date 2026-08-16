@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, MessageSquare } from 'lucide-react';
+import { Plus, MessageSquare, Trash2 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Thread } from '@/core/db';
 
@@ -25,6 +25,12 @@ export function ThreadList({ onOpenThread }: Props) {
     };
     await db.threads.add(thread);
     onOpenThread(thread.id);
+  };
+
+  const deleteThread = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await db.messages.where('threadId').equals(id).delete();
+    await db.threads.delete(id);
   };
 
   return (
@@ -56,18 +62,27 @@ export function ThreadList({ onOpenThread }: Props) {
 
         <ul className="space-y-1">
           {threads?.map((t) => (
-            <li key={t.id}>
+            <li key={t.id} className="group relative">
               <button
                 onClick={() => onOpenThread(t.id)}
-                className="w-full rounded-xl border border-transparent px-3 py-3 text-left transition-colors hover:border-[var(--border)] hover:bg-white/5"
+                className="w-full rounded-xl border border-transparent px-3 py-3 pr-10 text-left transition-colors hover:border-[var(--border)] hover:bg-white/5"
               >
                 <div className="truncate text-sm font-medium text-[var(--text)]">{t.title}</div>
                 {t.preview && (
                   <div className="mt-0.5 truncate text-xs text-[var(--muted)]">{t.preview}</div>
                 )}
                 <div className="mt-1 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                  {t.kind === 'agent' ? 'Agent · ' : ''}
                   {new Date(t.updatedAt).toLocaleString()}
                 </div>
+              </button>
+              <button
+                type="button"
+                title="Delete thread"
+                onClick={(e) => deleteThread(t.id, e)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-[var(--muted)] opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+              >
+                <Trash2 size={14} />
               </button>
             </li>
           ))}
