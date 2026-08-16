@@ -6,41 +6,42 @@ Local-first messaging and AI agent platform.
 
 | Area | Status |
 |------|--------|
-| Threads + local messages | Working |
-| Gemini streaming | Working |
+| Threads + search | Working |
+| Gemini streaming + vision | Working |
 | Agents (prompt, model, temperature, delete) | Working |
 | Markdown bubbles | Working |
-| Image attach + vision | Working |
-| Voice notes (record / playback) | Working |
+| Image attach (compressed) + vision | Working |
+| Voice notes + browser STT | Working |
+| Message delete / thread export | Working |
 | Lockbox + passphrase encryption | Working |
 | Dark / light theme | Working |
 
-Still later: STT on voice notes, channels, P2P, organiser suite, local LLMs.
+Later: channels, P2P, organiser, local LLMs, stronger offline packaging.
 
 ## Architecture
 
 ```
 src/
-  core/           db, crypto, ai (multimodal stream), session
+  core/           db, crypto, ai, session, media
   features/
     messaging/    threads, chat, markdown, media
-    agents/       list, edit, delete, start chat
-    lockbox/      encrypted API keys
-    settings/     theme
+    agents/
+    lockbox/
+    settings/
 ```
 
 ## Run
 
 ```bash
 npm install
-cp .env.example .env.local   # optional VITE_GEMINI_API_KEY
+cp .env.example .env.local
 npm run dev
 ```
 
-1. **Lockbox** → save Gemini key (encrypted recommended) → unlock session  
-2. **Agents** → create, set prompt/model → start chat  
-3. Send text, images (vision), or voice notes  
+1. Lockbox → save Gemini key → unlock session  
+2. Agents → create → start chat  
+3. Text, images, or voice (STT when the browser supports it)  
 
 ## Stack
 
-React 19 · TypeScript · Vite · Tailwind v4 · Dexie · Web Crypto · Gemini SSE (no heavy SDK)
+React 19 · TypeScript · Vite · Tailwind v4 · Dexie · Web Crypto · Gemini SSE
