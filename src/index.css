@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-:root {
+:root,
+[data-theme="dark"] {
   --bg: #0a0a0a;
   --panel: #141414;
   --border: #262626;
@@ -8,6 +9,16 @@
   --muted: #a3a3a3;
   --accent: #f97316;
   --accent-dim: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+[data-theme="light"] {
+  --bg: #f4f4f5;
+  --panel: #ffffff;
+  --border: #e4e4e7;
+  --text: #18181b;
+  --muted: #71717a;
+  --accent: #ea580c;
+  --accent-dim: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 * {
@@ -28,7 +39,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
