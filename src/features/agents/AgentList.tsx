@@ -1,8 +1,16 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, Bot, MessageSquare } from 'lucide-react';
+import { Plus, Bot, MessageSquare, Trash2 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { db, type Agent, type Thread } from '@/core/db';
+
+const MODELS = [
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+] as const;
 
 interface Props {
   onOpenThread: (id: string) => void;
@@ -44,6 +52,11 @@ export function AgentList({ onOpenThread }: Props) {
 
   const updateAgent = async (id: string, patch: Partial<Agent>) => {
     await db.agents.update(id, { ...patch, updatedAt: Date.now() });
+  };
+
+  const deleteAgent = async (id: string) => {
+    await db.agents.delete(id);
+    if (editingId === id) setEditingId(null);
   };
 
   return (
@@ -95,7 +108,44 @@ export function AgentList({ onOpenThread }: Props) {
                       onChange={(e) => updateAgent(a.id, { systemPrompt: e.target.value })}
                       placeholder="System prompt"
                     />
-                    <div className="flex justify-end gap-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="space-y-1 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                        Model
+                        <select
+                          value={a.model || 'gemini-2.0-flash'}
+                          onChange={(e) => updateAgent(a.id, { model: e.target.value })}
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] outline-none"
+                        >
+                          {MODELS.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="space-y-1 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                        Temperature ({a.temperature ?? 0.7})
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          value={a.temperature ?? 0.7}
+                          onChange={(e) =>
+                            updateAgent(a.id, { temperature: Number(e.target.value) })
+                          }
+                          className="w-full"
+                        />
+                      </label>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <button
+                        onClick={() => deleteAgent(a.id)}
+                        className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10"
+                      >
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
                       <button
                         onClick={() => setEditingId(null)}
                         className="rounded-lg px-3 py-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]"
@@ -105,32 +155,29 @@ export function AgentList({ onOpenThread }: Props) {
                     </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="flex items-start justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(a.id)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="text-sm font-medium">{a.name}</div>
-                        <div className="mt-1 line-clamp-2 text-xs text-[var(--muted)]">
-                          {a.systemPrompt}
-                        </div>
-                        {a.model && (
-                          <div className="mt-2 text-[10px] uppercase tracking-wider text-[var(--muted)]">
-                            {a.model}
-                          </div>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => startChat(a)}
-                        title="Chat with agent"
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--accent)] hover:bg-[var(--accent-dim)]"
-                      >
-                        <MessageSquare size={16} />
-                      </button>
-                    </div>
-                  </>
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(a.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="text-sm font-medium">{a.name}</div>
+                      <div className="mt-1 line-clamp-2 text-xs text-[var(--muted)]">
+                        {a.systemPrompt}
+                      </div>
+                      <div className="mt-2 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                        {a.model || 'gemini-2.0-flash'}
+                        {typeof a.temperature === 'number' ? ` · t=${a.temperature}` : ''}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => startChat(a)}
+                      title="Chat with agent"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--accent)] hover:bg-[var(--accent-dim)]"
+                    >
+                      <MessageSquare size={16} />
+                    </button>
+                  </div>
                 )}
               </li>
             );
