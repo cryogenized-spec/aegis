@@ -7,6 +7,8 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export interface ChatTurn {
   role: ChatRole;
   content: string;
+  /** Optional image data URL for vision turns */
+  imageDataUrl?: string;
 }
 
 export interface StreamOptions {
@@ -16,12 +18,6 @@ export interface StreamOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Resolve the API key priority:
- * 1. In-memory session (unlocked encrypted key)
- * 2. Plaintext lockbox value (legacy / no passphrase)
- * 3. Vite env fallback
- */
 export async function resolveApiKey(): Promise<string | null> {
   const session = getSessionGeminiKey();
   if (session) return session;
@@ -37,9 +33,37 @@ export async function resolveApiKey(): Promise<string | null> {
   return null;
 }
 
+function dataUrlToInlinePart(dataUrl: string): { inlineData: { mimeType: string; data: string } } | null {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) return null;
+  return {
+    inlineData: {
+      mimeType: match[1],
+      data: match[2],
+    },
+  };
+}
+
+function turnToParts(turn: ChatTurn): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [];
+  if (turn.imageDataUrl) {
+    const img = dataUrlToInlinePart(turn.imageDataUrl);
+    if (img) parts.push(img);
+  }
+  const text = turn.content?.trim();
+  if (text && text !== '(image)' && text !== '(voice note)') {
+    parts.push({ text });
+  } else if (turn.imageDataUrl && parts.length > 0) {
+    parts.push({ text: 'Describe or respond to this image.' });
+  }
+  if (parts.length === 0 && text) {
+    parts.push({ text });
+  }
+  return parts;
+}
+
 /**
- * Stream a completion from Gemini via the public Generative Language API.
- * Yields text chunks as they arrive (SSE).
+ * Stream a completion from Gemini (text and optional images).
  */
 export async function* streamGemini(
   turns: ChatTurn[],
@@ -59,8 +83,9 @@ export async function* streamGemini(
     .filter((t) => t.role !== 'system')
     .map((t) => ({
       role: t.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: t.content }],
-    }));
+      parts: turnToParts(t),
+    }))
+    .filter((c) => c.parts.length > 0);
 
   const body: Record<string, unknown> = {
     contents,
